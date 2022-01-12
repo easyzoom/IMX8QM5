@@ -95,7 +95,7 @@ int main(void)
     }
 
     /* Enable interrupt in irqsteer */
-    if (sc_pm_set_resource_power_mode(ipc, SC_R_IRQSTR_M4_1, SC_PM_PW_MODE_ON) != SC_ERR_NONE)
+    if (sc_pm_set_resource_power_mode(ipc, SC_R_IRQSTR_M4_0, SC_PM_PW_MODE_ON) != SC_ERR_NONE)
     {
         assert(false);
     }
@@ -126,7 +126,7 @@ int main(void)
     EDMA_CreateHandle(&g_lpuartTxEdmaHandle, EXAMPLE_LPUART_DMA_BASEADDR, LPUART_TX_DMA_CHANNEL);
     EDMA_CreateHandle(&g_lpuartRxEdmaHandle, EXAMPLE_LPUART_DMA_BASEADDR, LPUART_RX_DMA_CHANNEL);
     /* Create LPUART DMA handle. */
-    LPUART_TransferCreateHandleEDMA(DEMO_LPUART, &g_lpuartEdmaHandle, LPUART_UserCallback, NULL, &g_lpuartTxEdmaHandle,
+    LPUART_TransferCreateHandleEDMA(DEMO_LPUART, &g_lpuartEdmaHandle, NULL, NULL, &g_lpuartTxEdmaHandle,
                                     &g_lpuartRxEdmaHandle);
     /* Enable RX interrupt. */
     LPUART_EnableInterrupts(DEMO_LPUART, kLPUART_IdleLineInterruptEnable);
