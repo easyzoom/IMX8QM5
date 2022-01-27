@@ -18,14 +18,6 @@
 /*******************************************************************************
  * Definitions
  ******************************************************************************/
-#define EXAMPLE_CAN_IOEXP_LPI2C                 CM4_1__LPI2C /* I2C instance used for CAN I/O EXPANDER on Base board */
-#define EXAMPLE_CAN_IOEXP_I2C_ADDR              (0x20)
-#define EXAMPLE_CAN_IOEXP_LPI2C_CLOCK_FREQUENCY CLOCK_GetIpFreq(kCLOCK_M4_1_Lpi2c)
-
-#define I2C_RELEASE_SCL_GPIO CM4_1__RGPIO
-#define I2C_RELEASE_SDA_GPIO CM4_1__RGPIO
-#define I2C_RELEASE_SCL_PIN  (2U)
-#define I2C_RELEASE_SDA_PIN  (3U)
 /* Considering that the first valid MB must be used as Reserved TX MB for ERR005641,
  * if RX FIFO enables (RFEN bit in MCE set as 1) and RFFN in CTRL2 is set default as zero,
  * the first valid TX MB Number shall be 8;
@@ -33,24 +25,14 @@
  * the user should consider to detail the first valid MB number;
  * if RX FIFO disables (RFEN bit in MCE set as 0) , the first valid MB number would be zero.
  */
-#define RX_MESSAGE_BUFFER_NUM (9)
-#define TX_MESSAGE_BUFFER_NUM (8)
-
-/* PCA6416 I2C Register Map */
-#define PCA6416_REG_INPUT_PORT_0              (0x0)
-#define PCA6416_REG_INPUT_PORT_1              (0x1)
-#define PCA6416_REG_OUTPUT_PORT_0             (0x2)
-#define PCA6416_REG_OUTPUT_PORT_1             (0x3)
-#define PCA6416_REG_POLARITY_INVERSION_PORT_0 (0x4)
-#define PCA6416_REG_POLARITY_INVERSION_PORT_1 (0x5)
-#define PCA6416_REG_CONFIGURATION_PORT_0      (0x6)
-#define PCA6416_REG_CONFIGURATION_PORT_1      (0x7)
-
-#define EXAMPLE_CAN          DMA__CAN0
-#define EXAMPLE_CAN_CLK_FREQ CLOCK_GetIpFreq(kCLOCK_DMA_Can0)
-
-#define DLC (1)
-
+#define RX_MESSAGE_BUFFER_NUM   (9)
+#define TX_MESSAGE_BUFFER_NUM   (8)
+#define EXAMPLE_CAN             DMA__CAN0
+#define EXAMPLE_CAN_CLK_FREQ    CLOCK_GetIpFreq(kCLOCK_DMA_Can0)
+#define DLC                     (1)
+#define CAN_POWER               SC_R_CAN_0
+#define CAN_CLOCK               kCLOCK_DMA_Can0
+#define CAN_INTERRUPT           DMA_FLEXCAN0_INT_IRQn
 /* The CAN clock prescaler = CAN source clock/(baud rate * quantum), and the prescaler must be an integer.
    The quantum default value is set to 10=(3+2+1)+4, because for most platforms the CAN clock frequency is
    a multiple of 10. e.g. 120M CAN source clock/(1M baud rate * 10) is an integer. If the CAN clock frequency
@@ -89,115 +71,6 @@ uint32_t rxIdentifier;
 /*******************************************************************************
  * Code
  ******************************************************************************/
-static bool PCA6416_WriteReg(
-    LPI2C_Type *base, const uint8_t dev_addr, const uint8_t reg_offset, const uint8_t *txBuff, uint32_t txSize)
-{
-    status_t reVal = kStatus_Fail;
-
-    if (kStatus_Success == LPI2C_MasterStart(base, dev_addr, kLPI2C_Write))
-    {
-        while (LPI2C_MasterGetStatusFlags(base) & kLPI2C_MasterNackDetectFlag)
-        {
-        }
-
-        reVal = LPI2C_MasterSend(base, (void *)&reg_offset, 1);
-        if (reVal != kStatus_Success)
-        {
-            return -1;
-        }
-
-        reVal = LPI2C_MasterSend(base, (void *)txBuff, txSize);
-        if (reVal != kStatus_Success)
-        {
-            return -1;
-        }
-
-        reVal = LPI2C_MasterStop(base);
-        if (reVal != kStatus_Success)
-        {
-            return -1;
-        }
-    }
-    return kStatus_Success;
-}
-
-static void i2c_release_bus_delay(void)
-{
-    uint32_t i = 0;
-    for (i = 0; i < 264U; i++)
-    {
-        __NOP();
-    }
-}
-
-void BOARD_I2C_ReleaseBus(void)
-{
-    uint8_t i = 0;
-    rgpio_pin_config_t pin_config;
-
-    pin_config.pinDirection = kRGPIO_DigitalOutput;
-    pin_config.outputLogic  = 1U;
-
-    RGPIO_PinInit(I2C_RELEASE_SCL_GPIO, I2C_RELEASE_SCL_PIN, &pin_config); /* I2C SCL */
-    RGPIO_PinInit(I2C_RELEASE_SDA_GPIO, I2C_RELEASE_SDA_PIN, &pin_config); /* I2C SDA */
-
-    /* Drive SDA low first to simulate a start */
-    RGPIO_WritePinOutput(I2C_RELEASE_SDA_GPIO, I2C_RELEASE_SDA_PIN, 0U);
-    i2c_release_bus_delay();
-
-    /* Send 9 pulses on SCL and keep SDA high */
-    for (i = 0; i < 9; i++)
-    {
-        RGPIO_WritePinOutput(I2C_RELEASE_SCL_GPIO, I2C_RELEASE_SCL_PIN, 0U);
-        i2c_release_bus_delay();
-
-        RGPIO_WritePinOutput(I2C_RELEASE_SDA_GPIO, I2C_RELEASE_SDA_PIN, 1U);
-        i2c_release_bus_delay();
-
-        RGPIO_WritePinOutput(I2C_RELEASE_SCL_GPIO, I2C_RELEASE_SCL_PIN, 1U);
-        i2c_release_bus_delay();
-        i2c_release_bus_delay();
-    }
-
-    /* Send stop */
-    RGPIO_WritePinOutput(I2C_RELEASE_SCL_GPIO, I2C_RELEASE_SCL_PIN, 0U);
-    i2c_release_bus_delay();
-
-    RGPIO_WritePinOutput(I2C_RELEASE_SDA_GPIO, I2C_RELEASE_SDA_PIN, 0U);
-    i2c_release_bus_delay();
-
-    RGPIO_WritePinOutput(I2C_RELEASE_SCL_GPIO, I2C_RELEASE_SCL_PIN, 1U);
-    i2c_release_bus_delay();
-
-    RGPIO_WritePinOutput(I2C_RELEASE_SDA_GPIO, I2C_RELEASE_SDA_PIN, 1U);
-    i2c_release_bus_delay();
-}
-
-void BOARD_ConfigureExpansionIO(void)
-{
-    uint32_t i;
-    lpi2c_master_config_t masterConfig;
-    uint8_t txBuffer[4] = {0};
-
-    /* Configure CAN IO EXPANDER PCA6416 to initialize TJA1043T */
-    LPI2C_MasterGetDefaultConfig(&masterConfig);
-    LPI2C_MasterInit(EXAMPLE_CAN_IOEXP_LPI2C, &masterConfig, EXAMPLE_CAN_IOEXP_LPI2C_CLOCK_FREQUENCY);
-    txBuffer[0] = 0;
-    PCA6416_WriteReg(EXAMPLE_CAN_IOEXP_LPI2C, EXAMPLE_CAN_IOEXP_I2C_ADDR, PCA6416_REG_CONFIGURATION_PORT_0, txBuffer,
-                     1);
-    txBuffer[0] = 0;
-    PCA6416_WriteReg(EXAMPLE_CAN_IOEXP_LPI2C, EXAMPLE_CAN_IOEXP_I2C_ADDR, PCA6416_REG_OUTPUT_PORT_0, txBuffer, 1);
-    i = 0;
-    while (i < 15000000)
-    {
-        __ASM("nop");
-        i++;
-    }
-    txBuffer[0] = 0x28;
-    PCA6416_WriteReg(EXAMPLE_CAN_IOEXP_LPI2C, EXAMPLE_CAN_IOEXP_I2C_ADDR, PCA6416_REG_OUTPUT_PORT_0, txBuffer, 1);
-
-    LPI2C_MasterDeinit(EXAMPLE_CAN_IOEXP_LPI2C);
-}
 
 /*!
  * @brief FlexCAN Call Back function
@@ -207,13 +80,14 @@ static void flexcan_callback(CAN_Type *base, flexcan_handle_t *handle, status_t 
     switch (status)
     {
         case kStatus_FLEXCAN_RxIdle:
-            if (RX_MESSAGE_BUFFER_NUM == result)
+            if ((RX_MESSAGE_BUFFER_NUM == result) || (TX_MESSAGE_BUFFER_NUM == result))
             {
                 rxComplete = true;
             }
             break;
 
         case kStatus_FLEXCAN_TxIdle:
+    case kStatus_FLEXCAN_TxSwitchToRx:
             if (TX_MESSAGE_BUFFER_NUM == result)
             {
                 txComplete = true;
@@ -253,44 +127,20 @@ int main(void)
     {
         PRINTF("Error: Failed to power on IRQSTEER!\r\n");
     }
-    if (sc_pm_set_resource_power_mode(ipc, SC_R_CAN_0, SC_PM_PW_MODE_ON) != SC_ERR_NONE)
+    if (sc_pm_set_resource_power_mode(ipc, CAN_POWER, SC_PM_PW_MODE_ON) != SC_ERR_NONE)
     {
         PRINTF("Error: Failed to power on FLEXCAN\r\n");
     }
-    if (sc_pm_set_resource_power_mode(ipc, SC_R_M4_1_I2C, SC_PM_PW_MODE_ON) != SC_ERR_NONE)
-    {
-        PRINTF("Error: Failed to power on LPI2C\r\n");
-    }
 
     /* Set Peripheral clock frequency. */
-    if (CLOCK_SetIpFreq(kCLOCK_DMA_Can0, SC_80MHZ) == 0)
+    if (CLOCK_SetIpFreq(CAN_CLOCK, SC_80MHZ) == 0)
     {
         PRINTF("Error: Failed to set FLEXCAN frequency\r\n");
     }
-    if (CLOCK_SetIpFreq(kCLOCK_M4_1_Lpi2c, SC_133MHZ) == 0)
-    {
-        PRINTF("Error: Failed to set LPI2C frequency\r\n");
-    }
-
-    /* Release I2C bus in case I2C slave hangs. */
-    BOARD_GPIO_ConfigurePins(ipc);
-    if (sc_pm_set_resource_power_mode(ipc, SC_R_M4_1_RGPIO, SC_PM_PW_MODE_ON) != SC_ERR_NONE)
-    {
-        PRINTF("Error: Failed to power on SC_R_M4_1_RGPIO\r\n");
-    }
-    BOARD_I2C_ReleaseBus();
-    if (sc_pm_set_resource_power_mode(ipc, SC_R_M4_1_RGPIO, SC_PM_PW_MODE_OFF) != SC_ERR_NONE)
-    {
-        PRINTF("Error: Failed to power off SC_R_M4_1_RGPIO\r\n");
-    }
-
-    /* Configure CAN I/O Expander */
-    BOARD_I2C_ConfigurePins(ipc);
-    BOARD_ConfigureExpansionIO();
 
     /* Enable interrupt in irqsteer */
     IRQSTEER_Init(IRQSTEER);
-    IRQSTEER_EnableInterrupt(IRQSTEER, DMA_FLEXCAN0_INT_IRQn);
+    IRQSTEER_EnableInterrupt(IRQSTEER, CAN_INTERRUPT);
 
     LOG_INFO("********* FLEXCAN Interrupt EXAMPLE *********\r\n");
     LOG_INFO("    Message format: Standard (11 bit id)\r\n");
@@ -342,49 +192,11 @@ int main(void)
 #endif
 
 /* If special quantum setting is needed, set the timing parameters. */
-#if (defined(SET_CAN_QUANTUM) && SET_CAN_QUANTUM)
     flexcanConfig.timingConfig.phaseSeg1 = PSEG1;
     flexcanConfig.timingConfig.phaseSeg2 = PSEG2;
     flexcanConfig.timingConfig.propSeg   = PROPSEG;
-#if (defined(FSL_FEATURE_FLEXCAN_HAS_FLEXIBLE_DATA_RATE) && FSL_FEATURE_FLEXCAN_HAS_FLEXIBLE_DATA_RATE)
-    flexcanConfig.timingConfig.fphaseSeg1 = FPSEG1;
-    flexcanConfig.timingConfig.fphaseSeg2 = FPSEG2;
-    flexcanConfig.timingConfig.fpropSeg   = FPROPSEG;
-#endif
-#endif
 
-#if (defined(USE_IMPROVED_TIMING_CONFIG) && USE_IMPROVED_TIMING_CONFIG)
-    flexcan_timing_config_t timing_config;
-    memset(&timing_config, 0, sizeof(flexcan_timing_config_t));
-#if (defined(USE_CANFD) && USE_CANFD)
-    if (FLEXCAN_FDCalculateImprovedTimingValues(flexcanConfig.baudRate, flexcanConfig.baudRateFD, EXAMPLE_CAN_CLK_FREQ,
-                                                &timing_config))
-    {
-        /* Update the improved timing configuration*/
-        memcpy(&(flexcanConfig.timingConfig), &timing_config, sizeof(flexcan_timing_config_t));
-    }
-    else
-    {
-        LOG_INFO("No found Improved Timing Configuration. Just used default configuration\r\n\r\n");
-    }
-#else
-    if (FLEXCAN_CalculateImprovedTimingValues(flexcanConfig.baudRate, EXAMPLE_CAN_CLK_FREQ, &timing_config))
-    {
-        /* Update the improved timing configuration*/
-        memcpy(&(flexcanConfig.timingConfig), &timing_config, sizeof(flexcan_timing_config_t));
-    }
-    else
-    {
-        LOG_INFO("No found Improved Timing Configuration. Just used default configuration\r\n\r\n");
-    }
-#endif
-#endif
-
-#if (defined(USE_CANFD) && USE_CANFD)
-    FLEXCAN_FDInit(EXAMPLE_CAN, &flexcanConfig, EXAMPLE_CAN_CLK_FREQ, BYTES_IN_MB, true);
-#else
     FLEXCAN_Init(EXAMPLE_CAN, &flexcanConfig, EXAMPLE_CAN_CLK_FREQ);
-#endif
 
     /* Create FlexCAN handle structure and set call back function. */
     FLEXCAN_TransferCreateHandle(EXAMPLE_CAN, &flexcanHandle, flexcan_callback, NULL);
@@ -396,18 +208,10 @@ int main(void)
     mbConfig.format = kFLEXCAN_FrameFormatStandard;
     mbConfig.type   = kFLEXCAN_FrameTypeData;
     mbConfig.id     = FLEXCAN_ID_STD(rxIdentifier);
-#if (defined(USE_CANFD) && USE_CANFD)
-    FLEXCAN_SetFDRxMbConfig(EXAMPLE_CAN, RX_MESSAGE_BUFFER_NUM, &mbConfig, true);
-#else
     FLEXCAN_SetRxMbConfig(EXAMPLE_CAN, RX_MESSAGE_BUFFER_NUM, &mbConfig, true);
-#endif
 
-/* Setup Tx Message Buffer. */
-#if (defined(USE_CANFD) && USE_CANFD)
-    FLEXCAN_SetFDTxMbConfig(EXAMPLE_CAN, TX_MESSAGE_BUFFER_NUM, true);
-#else
+    /* Setup Tx Message Buffer. */
     FLEXCAN_SetTxMbConfig(EXAMPLE_CAN, TX_MESSAGE_BUFFER_NUM, true);
-#endif
 
     if ((node_type == 'A') || (node_type == 'a'))
     {
@@ -429,17 +233,9 @@ int main(void)
             frame.format = (uint8_t)kFLEXCAN_FrameFormatStandard;
             frame.type   = (uint8_t)kFLEXCAN_FrameTypeData;
             frame.length = (uint8_t)DLC;
-#if (defined(USE_CANFD) && USE_CANFD)
-            frame.brs = (uint8_t)1U;
-#endif
             txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            txXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#else
             txXfer.frame = &frame;
             (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#endif
 
             while (!txComplete)
             {
@@ -448,13 +244,8 @@ int main(void)
 
             /* Start receive data through Rx Message Buffer. */
             rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            rxXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#else
             rxXfer.frame = &frame;
             (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#endif
 
             /* Wait until Rx MB full. */
             while (!rxComplete)
@@ -484,13 +275,8 @@ int main(void)
 
             /* Start receive data through Rx Message Buffer. */
             rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            rxXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#else
             rxXfer.frame = &frame;
             (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#endif
 
             /* Wait until Rx receive full. */
             while (!rxComplete)
@@ -503,14 +289,8 @@ int main(void)
 
             frame.id     = FLEXCAN_ID_STD(txIdentifier);
             txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            frame.brs      = 1;
-            txXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#else
             txXfer.frame = &frame;
             (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#endif
 
             while (!txComplete)
             {

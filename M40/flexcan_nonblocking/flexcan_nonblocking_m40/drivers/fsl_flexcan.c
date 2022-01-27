@@ -3486,7 +3486,7 @@ static status_t FLEXCAN_SubHandlerForDataTransfered(CAN_Type *base, flexcan_hand
 
                 /* Sove Rx Remote Frame.  User need to Read the frame in Mail box in time by Read from MB API. */
                 case (uint8_t)kFLEXCAN_StateRxRemote:
-                    status = kStatus_FLEXCAN_RxRemote;
+                    // status = kStatus_FLEXCAN_RxRemote;
 #if (defined(FSL_FEATURE_FLEXCAN_HAS_FLEXIBLE_DATA_RATE) && FSL_FEATURE_FLEXCAN_HAS_FLEXIBLE_DATA_RATE)
                     if (0U != (base->MCR & CAN_MCR_FDEN_MASK))
                     {
@@ -3494,6 +3494,15 @@ static status_t FLEXCAN_SubHandlerForDataTransfered(CAN_Type *base, flexcan_hand
                     }
                     else
 #endif
+                    {
+                        status = FLEXCAN_ReadRxMb(base, (uint8_t)result, handle->mbFrameBuf[result]);
+                        if (kStatus_Success == status)
+                        {
+                            /* Align the current index of RX MB timestamp to the timestamp array by handle. */
+                            handle->timestamp[result] = handle->mbFrameBuf[result]->timestamp;
+                            status                    = kStatus_FLEXCAN_RxIdle;
+                        }
+                    }
                     {
                         FLEXCAN_TransferAbortReceive(base, handle, (uint8_t)result);
                     }
@@ -3518,6 +3527,9 @@ static status_t FLEXCAN_SubHandlerForDataTransfered(CAN_Type *base, flexcan_hand
                 case (uint8_t)kFLEXCAN_StateTxRemote:
                     handle->mbState[result] = (uint8_t)kFLEXCAN_StateRxRemote;
                     status                  = kStatus_FLEXCAN_TxSwitchToRx;
+                    {
+                        FLEXCAN_TransferAbortReceive(base, handle, (uint8_t)result);
+                    }
                     break;
 
                 default:
