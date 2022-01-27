@@ -25,8 +25,7 @@
  * the user should consider to detail the first valid MB number;
  * if RX FIFO disables (RFEN bit in MCE set as 0) , the first valid MB number would be zero.
  */
-#define RX_MESSAGE_BUFFER_NUM   (9)
-#define TX_MESSAGE_BUFFER_NUM   (8)
+#define TX_MESSAGE_BUFFER_NUM   (9)
 #define EXAMPLE_CAN             DMA__CAN0
 #define EXAMPLE_CAN_CLK_FREQ    CLOCK_GetIpFreq(kCLOCK_DMA_Can0)
 #define DLC                     (1)
@@ -60,11 +59,9 @@ volatile bool txComplete = false;
 volatile bool rxComplete = false;
 volatile bool wakenUp    = false;
 flexcan_mb_transfer_t txXfer, rxXfer;
-#if (defined(USE_CANFD) && USE_CANFD)
-flexcan_fd_frame_t frame;
-#else
-flexcan_frame_t frame;
-#endif
+flexcan_fifo_transfer_t rxFifoXfer;
+flexcan_frame_t txFrame;
+AT_NONCACHEABLE_SECTION(flexcan_frame_t rxFrame);
 uint32_t txIdentifier;
 uint32_t rxIdentifier;
 
@@ -77,29 +74,9 @@ uint32_t rxIdentifier;
  */
 static void flexcan_callback(CAN_Type *base, flexcan_handle_t *handle, status_t status, uint32_t result, void *userData)
 {
-    switch (status)
+    if ((kStatus_FLEXCAN_TxIdle == status) && (TX_MESSAGE_BUFFER_NUM == result))
     {
-        case kStatus_FLEXCAN_RxIdle:
-            if ((RX_MESSAGE_BUFFER_NUM == result) || (TX_MESSAGE_BUFFER_NUM == result))
-            {
-                rxComplete = true;
-            }
-            break;
-
-        case kStatus_FLEXCAN_TxIdle:
-    case kStatus_FLEXCAN_TxSwitchToRx:
-            if (TX_MESSAGE_BUFFER_NUM == result)
-            {
-                txComplete = true;
-            }
-            break;
-
-        case kStatus_FLEXCAN_WakeUp:
-            wakenUp = true;
-            break;
-
-        default:
-            break;
+        txComplete = true;
     }
 }
 
@@ -109,7 +86,10 @@ static void flexcan_callback(CAN_Type *base, flexcan_handle_t *handle, status_t 
 int main(void)
 {
     flexcan_config_t flexcanConfig;
-    flexcan_rx_mb_config_t mbConfig;
+    flexcan_rx_fifo_config_t rxFifoConfig;
+    uint32_t rxFifoFilter[] = {
+        FLEXCAN_RX_FIFO_STD_FILTER_TYPE_A(0, 0, 0), FLEXCAN_RX_FIFO_STD_FILTER_TYPE_A(0, 1, 0),
+        FLEXCAN_RX_FIFO_STD_FILTER_TYPE_A(0, 0, 0), FLEXCAN_RX_FIFO_STD_FILTER_TYPE_A(0, 1, 0)};
     uint8_t node_type;
 
     /* Initialize board hardware. */
@@ -144,7 +124,6 @@ int main(void)
 
     LOG_INFO("********* FLEXCAN Interrupt EXAMPLE *********\r\n");
     LOG_INFO("    Message format: Standard (11 bit id)\r\n");
-    LOG_INFO("    Message buffer %d used for Rx.\r\n", RX_MESSAGE_BUFFER_NUM);
     LOG_INFO("    Message buffer %d used for Tx.\r\n", TX_MESSAGE_BUFFER_NUM);
     LOG_INFO("    Interrupt Mode: Enabled\r\n");
     LOG_INFO("    Operation Mode: TX and RX --> Normal\r\n");
@@ -204,24 +183,21 @@ int main(void)
     /* Set Rx Masking mechanism. */
     FLEXCAN_SetRxMbGlobalMask(EXAMPLE_CAN, FLEXCAN_RX_MB_STD_MASK(rxIdentifier, 0, 0));
 
-    /* Setup Rx Message Buffer. */
-    mbConfig.format = kFLEXCAN_FrameFormatStandard;
-    mbConfig.type   = kFLEXCAN_FrameTypeData;
-    mbConfig.id     = FLEXCAN_ID_STD(rxIdentifier);
-    FLEXCAN_SetRxMbConfig(EXAMPLE_CAN, RX_MESSAGE_BUFFER_NUM, &mbConfig, true);
+    // /* Setup Rx Message Buffer. */
+    // mbConfig.format = kFLEXCAN_FrameFormatStandard;
+    // mbConfig.type   = kFLEXCAN_FrameTypeData;
+    // mbConfig.id     = FLEXCAN_ID_STD(rxIdentifier);
+    // FLEXCAN_SetRxMbConfig(EXAMPLE_CAN, RX_MESSAGE_BUFFER_NUM, &mbConfig, true);
 
     /* Setup Tx Message Buffer. */
     FLEXCAN_SetTxMbConfig(EXAMPLE_CAN, TX_MESSAGE_BUFFER_NUM, true);
 
-    if ((node_type == 'A') || (node_type == 'a'))
-    {
-        LOG_INFO("Press any key to trigger one-shot transmission\r\n\r\n");
-        frame.dataByte0 = 0;
-    }
-    else
-    {
-        LOG_INFO("Start to Wait data from Node A\r\n\r\n");
-    }
+    /* Setup Rx FIFO. */
+    rxFifoConfig.idFilterTable = rxFifoFilter;
+    rxFifoConfig.idFilterType  = kFLEXCAN_RxFifoFilterTypeA;
+    rxFifoConfig.idFilterNum   = sizeof(rxFifoFilter) / sizeof(rxFifoFilter[0]);
+    rxFifoConfig.priority      = kFLEXCAN_RxFifoPrioHigh;
+    FLEXCAN_SetRxFifoConfig(EXAMPLE_CAN, &rxFifoConfig, true);
 
     while (true)
     {
@@ -229,12 +205,12 @@ int main(void)
         {
             GETCHAR();
 
-            frame.id     = FLEXCAN_ID_STD(txIdentifier);
-            frame.format = (uint8_t)kFLEXCAN_FrameFormatStandard;
-            frame.type   = (uint8_t)kFLEXCAN_FrameTypeData;
-            frame.length = (uint8_t)DLC;
+            txFrame.id     = FLEXCAN_ID_STD(txIdentifier);
+            txFrame.format = (uint8_t)kFLEXCAN_FrameFormatStandard;
+            txFrame.type   = (uint8_t)kFLEXCAN_FrameTypeData;
+            txFrame.length = (uint8_t)DLC;
             txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-            txXfer.frame = &frame;
+            txXfer.frame = &txFrame;
             (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
 
             while (!txComplete)
@@ -242,22 +218,19 @@ int main(void)
             };
             txComplete = false;
 
-            /* Start receive data through Rx Message Buffer. */
-            rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-            rxXfer.frame = &frame;
-            (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-
-            /* Wait until Rx MB full. */
-            while (!rxComplete)
+            /* Receive data through Rx FIFO. */
+            rxFifoXfer.frame = &rxFrame;
+            for (size_t i = 0; i < 4; i++)
             {
-            };
-            rxComplete = false;
+                (void)FLEXCAN_TransferReceiveFifoNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxFifoXfer);
+                while (!rxComplete)
+                {
+                }
+                rxComplete = false;
 
-            LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-                     frame.dataByte0, frame.timestamp);
-            LOG_INFO("Press any key to trigger the next transmission!\r\n\r\n");
-            frame.dataByte0++;
-            frame.dataByte1 = 0x55;
+                LOG_INFO("Receive Msg%d from FIFO: word0 = 0x%x, word1 = 0x%x, ID Filter Hit%d.\r\n", i + 1, rxFrame.dataWord0,
+                        rxFrame.dataWord1, rxFrame.idhit);
+            }
         }
         else
         {
@@ -273,23 +246,22 @@ int main(void)
                 LOG_INFO("B has been waken up!\r\n\r\n");
             }
 
-            /* Start receive data through Rx Message Buffer. */
-            rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-            rxXfer.frame = &frame;
-            (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-
-            /* Wait until Rx receive full. */
-            while (!rxComplete)
+            rxFifoXfer.frame = &rxFrame;
+            for (size_t i = 0; i < 4; i++)
             {
-            };
-            rxComplete = false;
+                (void)FLEXCAN_TransferReceiveFifoNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxFifoXfer);
+                while (!rxComplete)
+                {
+                }
+                rxComplete = false;
 
-            LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-                     frame.dataByte0, frame.timestamp);
+                LOG_INFO("Receive Msg%d from FIFO: word0 = 0x%x, word1 = 0x%x, ID Filter Hit%d.\r\n", i + 1, rxFrame.dataWord0,
+                        rxFrame.dataWord1, rxFrame.idhit);
+            }
 
-            frame.id     = FLEXCAN_ID_STD(txIdentifier);
+            txFrame.id     = FLEXCAN_ID_STD(txIdentifier);
             txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-            txXfer.frame = &frame;
+            txXfer.frame = &txFrame;
             (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
 
             while (!txComplete)
