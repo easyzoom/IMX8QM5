@@ -35,7 +35,7 @@
 #define EXAMPLE_CAN_POWER    SC_R_CAN_0
 #define EXAMPLE_CAN_IRQn     DMA_FLEXCAN0_INT_IRQn
 #define EXAMPLE_CAN_CLOCK    kCLOCK_DMA_Can0
-#define DLC                  (0)
+#define DLC                  (8)
 #define PSEG1                6
 #define PSEG2                4
 #define PROPSEG              6
@@ -154,7 +154,7 @@ static void hello_task(void *pvParameters)
     /* Select mailbox ID. */
     if ((node_type == 'A') || (node_type == 'a'))
     {
-        txIdentifier = 0x701;
+        txIdentifier = 0x601;
         rxIdentifier = 0x123;
     }
     else
@@ -201,26 +201,19 @@ static void hello_task(void *pvParameters)
 #if 1
             frame.id     = FLEXCAN_ID_STD(txIdentifier);
             frame.format = (uint8_t)kFLEXCAN_FrameFormatStandard;
-            frame.type   = (uint8_t)kFLEXCAN_FrameTypeRemote;
+            frame.type   = (uint8_t)kFLEXCAN_FrameTypeData;
             frame.length = (uint8_t)DLC;
-            // frame.dataByte0 = 0x40;
-            // frame.dataByte1 = 0x41;
-            // frame.dataByte3 = 0x60;
-            // frame.dataByte4 = 0x00;
-            // frame.dataByte5 = 0x00;
-            // frame.dataByte6 = 0x00;
-            // frame.dataByte7 = 0x00;
-#if (defined(USE_CANFD) && USE_CANFD)
-            frame.brs = (uint8_t)1U;
-#endif
+            frame.dataByte0 = 0x40;
+            frame.dataByte1 = 0x41;
+            frame.dataByte2 = 0x60;
+            frame.dataByte3 = 0x00;
+            frame.dataByte4 = 0x00;
+            frame.dataByte5 = 0x00;
+            frame.dataByte6 = 0x00;
+            frame.dataByte7 = 0x00;
             txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            txXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#else
             txXfer.frame = &frame;
             (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#endif
 
             while (!txComplete)
             {
@@ -228,14 +221,9 @@ static void hello_task(void *pvParameters)
             txComplete = false;
 #endif
             /* Start receive data through Rx Message Buffer. */
-            rxXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            rxXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#else
+            rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
             rxXfer.frame = &frame;
             (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#endif
 
             /* Wait until Rx MB full. */
             while (!rxComplete)
@@ -244,18 +232,18 @@ static void hello_task(void *pvParameters)
             rxComplete = false;
             LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
                      frame.dataByte0, frame.timestamp);
-            if(((frame.id >> CAN_ID_STD_SHIFT) & 0x0780) == 0x0080)
-            {
-                rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-                rxXfer.frame = &frame;
-                (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-                while (!rxComplete)
-                {
-                };
-                rxComplete = false;
-                LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-                     frame.dataByte0, frame.timestamp);
-            }
+            // if(((frame.id >> CAN_ID_STD_SHIFT) & 0x0780) == 0x0080)
+            // {
+            //     rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
+            //     rxXfer.frame = &frame;
+            //     (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
+            //     while (!rxComplete)
+            //     {
+            //     };
+            //     rxComplete = false;
+            //     LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
+            //          frame.dataByte0, frame.timestamp);
+            // }
 
             // LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
             //          frame.dataByte0, frame.timestamp);
@@ -279,14 +267,9 @@ static void hello_task(void *pvParameters)
 
             /* Start receive data through Rx Message Buffer. */
             rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            rxXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#else
             frame.length = 1;
             rxXfer.frame = &frame;
             (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-#endif
 
             /* Wait until Rx receive full. */
             while (!rxComplete)
@@ -299,14 +282,8 @@ static void hello_task(void *pvParameters)
 
             frame.id     = FLEXCAN_ID_STD(txIdentifier);
             txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-#if (defined(USE_CANFD) && USE_CANFD)
-            frame.brs      = 1;
-            txXfer.framefd = &frame;
-            (void)FLEXCAN_TransferFDSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#else
             txXfer.frame = &frame;
             (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-#endif
 
             while (!txComplete)
             {
