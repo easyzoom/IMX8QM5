@@ -52,6 +52,19 @@ flexcan_mb_transfer_t txXfer, rxXfer;
 flexcan_frame_t frame;
 uint32_t txIdentifier;
 uint32_t rxIdentifier;
+int remote_frame = 0;
+enum
+{
+  PHASE_START                   = 0,
+  PHASE_FLUSH_RX_MSG               ,
+  PHASE_CHECK_TX_BOX               ,
+  PHASE_SEND_REQ_MSG               ,
+  PHASE_CHECK_RX_BOX               ,
+  PHASE_RECV_RSP_MSG               ,
+  PHASE_BUILDING_RET               ,
+  PHASE_END                        ,
+  PHASE_ERROR                      ,
+};
 /*******************************************************************************
  * Code
  ******************************************************************************/
@@ -192,104 +205,153 @@ static void hello_task(void *pvParameters)
     {
         LOG_INFO("Start to Wait data from Node A\r\n\r\n");
     }
+    int phase_step = PHASE_START;
+    uint32_t phase_tick = xTaskGetTickCount();
+    status_t  status = kStatus_Success;
+    txIdentifier = 0x601;
 
     for (;;)
     {
         if ((node_type == 'A') || (node_type == 'a'))
         {
-            // GETCHAR();
-#if 1
-            frame.id     = FLEXCAN_ID_STD(txIdentifier);
-            frame.format = (uint8_t)kFLEXCAN_FrameFormatStandard;
-            frame.type   = (uint8_t)kFLEXCAN_FrameTypeData;
-            frame.length = (uint8_t)DLC;
-            frame.dataByte0 = 0x40;
-            frame.dataByte1 = 0x41;
-            frame.dataByte2 = 0x60;
-            frame.dataByte3 = 0x00;
-            frame.dataByte4 = 0x00;
-            frame.dataByte5 = 0x00;
-            frame.dataByte6 = 0x00;
-            frame.dataByte7 = 0x00;
-            txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-            txXfer.frame = &frame;
-            (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-
-            while (!txComplete)
+            switch (phase_step)
             {
-            };
-            txComplete = false;
-#endif
-            /* Start receive data through Rx Message Buffer. */
-            rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-            rxXfer.frame = &frame;
-            (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-
-            /* Wait until Rx MB full. */
-            while (!rxComplete)
-            {
-            };
-            rxComplete = false;
-            LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-                     frame.dataByte0, frame.timestamp);
-            // if(((frame.id >> CAN_ID_STD_SHIFT) & 0x0780) == 0x0080)
-            // {
-            //     rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-            //     rxXfer.frame = &frame;
-            //     (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-            //     while (!rxComplete)
-            //     {
-            //     };
-            //     rxComplete = false;
-            //     LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-            //          frame.dataByte0, frame.timestamp);
-            // }
-
-            // LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-            //          frame.dataByte0, frame.timestamp);
-            // LOG_INFO("Press any key to trigger the next transmission!\r\n\r\n");
-            // frame.dataByte0++;
-            // frame.dataByte1 = 0x55;
+                case PHASE_START:
+                    phase_step = PHASE_FLUSH_RX_MSG;
+                    break;
+                case PHASE_FLUSH_RX_MSG:
+                    {
+                        status = FLEXCAN_ReadRxMb(EXAMPLE_CAN, (uint8_t)RX_MESSAGE_BUFFER_NUM, &frame);
+                        if (status != kStatus_Success)
+                        {
+                            PRINTF("%02x %02x %02x %02x %02x %02x %02x %d %x\r\n", \
+                                            txXfer.frame->dataByte0, txXfer.frame->dataByte1, txXfer.frame->dataByte2,\
+                                            txXfer.frame->dataByte3, txXfer.frame->dataByte4, txXfer.frame->dataByte5,\
+                                            txXfer.frame->dataByte6, txXfer.frame->dataByte7, remote_frame, txIdentifier);
+                            PRINTF("ERROR: RxMessage Error. %s:%d status:%d,mb:%x,inter:%x\r\n", __FUNCTION__, __LINE__,status,FLEXCAN_GetMbStatusFlags(EXAMPLE_CAN, 1 << rxXfer.mbIdx),FLEXCAN_GetStatusFlags(EXAMPLE_CAN));
+                        }
+                        FLEXCAN_TransferAbortReceive(EXAMPLE_CAN, &flexcanHandle, (uint8_t)RX_MESSAGE_BUFFER_NUM);
+                        FLEXCAN_TransferAbortSend(EXAMPLE_CAN, &flexcanHandle, (uint8_t)TX_MESSAGE_BUFFER_NUM);
+                        FLEXCAN_ClearMbStatusFlags(EXAMPLE_CAN, 1 << (uint8_t)TX_MESSAGE_BUFFER_NUM);
+                        FLEXCAN_ClearMbStatusFlags(EXAMPLE_CAN, 1 << (uint8_t)RX_MESSAGE_BUFFER_NUM);
+                        // PRINTF("start:%x %02x %02x %02x %02x %02x %02x %02x\r\n", (rxXfer.frame->id >> CAN_ID_STD_SHIFT),\
+                        //                 rxXfer.frame->dataByte0, rxXfer.frame->dataByte1, rxXfer.frame->dataByte2,\
+                        //                 rxXfer.frame->dataByte3, rxXfer.frame->dataByte4, rxXfer.frame->dataByte5,\
+                        //                 rxXfer.frame->dataByte6, rxXfer.frame->dataByte7);
+                        phase_step = PHASE_CHECK_TX_BOX;
+                        phase_tick = xTaskGetTickCount();
+                    }
+                    break;
+                case PHASE_CHECK_TX_BOX:
+                    {
+                        frame.id     = FLEXCAN_ID_STD(txIdentifier);
+                        frame.format = (uint8_t)kFLEXCAN_FrameFormatStandard;
+                        frame.type   = (uint8_t)(remote_frame ? kFLEXCAN_FrameTypeRemote : kFLEXCAN_FrameTypeData);
+                        frame.length = (uint8_t)DLC;
+                        frame.dataWord0 = CAN_WORD0_DATA_BYTE_0(0x40) | CAN_WORD0_DATA_BYTE_1(0x41) | 
+                        CAN_WORD0_DATA_BYTE_2(0x60) | CAN_WORD0_DATA_BYTE_3(0x00);
+                        frame.dataWord1 = CAN_WORD1_DATA_BYTE_4(0x00) | CAN_WORD1_DATA_BYTE_5(0x00) | 
+                        CAN_WORD1_DATA_BYTE_6(0x00) | CAN_WORD1_DATA_BYTE_7(0x00);
+                        txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
+                        txXfer.frame = &frame;
+                        status = FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
+                        if (status != kStatus_Success)
+                        {
+                            PRINTF("remote_frame:%d tx_buf:%x ", remote_frame, txIdentifier);
+                            PRINTF("ERROR: TxMessage Error. %s:%d status:%d\r\n", __FUNCTION__, __LINE__,status);
+                        }
+                            phase_step = PHASE_SEND_REQ_MSG;
+                            phase_tick = xTaskGetTickCount();
+                    }
+                    break;
+                case PHASE_SEND_REQ_MSG:
+                    if(txComplete)
+                    {
+                        txComplete = false;
+                        phase_step = PHASE_CHECK_RX_BOX;
+                        phase_tick = xTaskGetTickCount();
+                    }
+                    else
+                    if (xTaskGetTickCount() > phase_tick + 10)
+                    {
+                        PRINTF("ERROR: TxMessage Timeout. %s:%d\r\n", __FUNCTION__, __LINE__);
+                    }
+                    break;
+                case PHASE_CHECK_RX_BOX:
+                    {
+                        /* receive response */
+                        rxXfer.mbIdx = (uint8_t)(remote_frame ? (uint8_t)TX_MESSAGE_BUFFER_NUM : (uint8_t)RX_MESSAGE_BUFFER_NUM);
+                        rxXfer.frame = &frame;
+                        if((uint8_t)0 == flexcanHandle.mbState[rxXfer.mbIdx])
+                        {
+                            status = FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
+                            if (status != kStatus_Success)
+                            {
+                                PRINTF("%02x %02x %02x %02x %02x %02x %02x %d %x\r\n", \
+                                                txXfer.frame->dataByte0, txXfer.frame->dataByte1, txXfer.frame->dataByte2,\
+                                                txXfer.frame->dataByte3, txXfer.frame->dataByte4, txXfer.frame->dataByte5,\
+                                                txXfer.frame->dataByte6, txXfer.frame->dataByte7, remote_frame, txIdentifier);
+                                PRINTF("ERROR: RxMessage Error. %s:%d status:%d,mb:%x,inter:%x\r\n", __FUNCTION__, __LINE__,status,FLEXCAN_GetMbStatusFlags(EXAMPLE_CAN, 1 << rxXfer.mbIdx),FLEXCAN_GetStatusFlags(EXAMPLE_CAN));
+                            }
+                            phase_step = PHASE_RECV_RSP_MSG;
+                            phase_tick = xTaskGetTickCount();
+                        }
+                        if (xTaskGetTickCount() > phase_tick +  10)
+                        {
+                            PRINTF("ERROR: RxMB Error. %s:%d status:%d,mb:%x,inter:%x\r\n", __FUNCTION__, __LINE__,status,FLEXCAN_GetMbStatusFlags(EXAMPLE_CAN, 1 << rxXfer.mbIdx),FLEXCAN_GetStatusFlags(EXAMPLE_CAN));
+                        }
+                    }
+                    break;
+                case PHASE_RECV_RSP_MSG:
+                    {
+                        if(!rxComplete)
+                        {
+                            if (xTaskGetTickCount() > phase_tick + 10)
+                            {
+                                PRINTF("mb:%x,inter:%x\r\n",FLEXCAN_GetMbStatusFlags(EXAMPLE_CAN, 1 << rxXfer.mbIdx),FLEXCAN_GetStatusFlags(EXAMPLE_CAN));
+                                PRINTF("%02x %02x %02x %02x %02x %02x %02x %d %x\r\n", \
+                                            txXfer.frame->dataByte0, txXfer.frame->dataByte1, txXfer.frame->dataByte2,\
+                                            txXfer.frame->dataByte3, txXfer.frame->dataByte4, txXfer.frame->dataByte5,\
+                                            txXfer.frame->dataByte6, txXfer.frame->dataByte7, remote_frame, txIdentifier);
+                                PRINTF("remote_frame:%d rx_buf:%x ", remote_frame, (rxXfer.frame->id >> CAN_ID_STD_SHIFT));
+                                PRINTF("%02x %02x %02x %02x %02x %02x %02x\r\n", \
+                                        rxXfer.frame->dataByte0, rxXfer.frame->dataByte1, rxXfer.frame->dataByte2,\
+                                        rxXfer.frame->dataByte3, rxXfer.frame->dataByte4, rxXfer.frame->dataByte5,\
+                                        rxXfer.frame->dataByte6, rxXfer.frame->dataByte7);
+                                PRINTF("ERROR: RxMessage Timeout. %s:%d\r\n", __FUNCTION__, __LINE__);
+                            }
+                        }
+                        if(rxComplete)
+                        {
+                            rxComplete = false;
+                            phase_step = PHASE_BUILDING_RET;
+                            phase_tick = xTaskGetTickCount();
+                        }
+                    }
+                    break;
+                case PHASE_BUILDING_RET:
+                    {
+                        LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT, frame.dataByte0, frame.timestamp);
+                        if(remote_frame == 0)
+                        {
+                            remote_frame = 1;
+                            txIdentifier = 0x601;
+                        }
+                        else
+                        {
+                            remote_frame = 0;
+                            txIdentifier = 0x701;
+                        }
+                    }
+                    break;
+                
+                default:
+                    break;
+            }
         }
         else
         {
-            /* Before this , should first make node B enter STOP mode after FlexCAN
-             * initialized with enableSelfWakeup=true and Rx MB configured, then A
-             * sends frame N which wakes up node B. A will continue to send frame N
-             * since no acknowledgement, then B received the second frame N(In the
-             * application it seems that B received the frame that woke it up which
-             * is not expected as stated in the reference manual, but actually the
-             * output in the terminal B received is the same second frame N). */
-            if (wakenUp)
-            {
-                LOG_INFO("B has been waken up!\r\n\r\n");
-            }
-
-            /* Start receive data through Rx Message Buffer. */
-            rxXfer.mbIdx = (uint8_t)RX_MESSAGE_BUFFER_NUM;
-            frame.length = 1;
-            rxXfer.frame = &frame;
-            (void)FLEXCAN_TransferReceiveNonBlocking(EXAMPLE_CAN, &flexcanHandle, &rxXfer);
-
-            /* Wait until Rx receive full. */
-            while (!rxComplete)
-            {
-            };
-            rxComplete = false;
-
-            LOG_INFO("Rx MB ID: 0x%3x, Rx MB data: 0x%x, Time stamp: %d\r\n", frame.id >> CAN_ID_STD_SHIFT,
-                     frame.dataByte0, frame.timestamp);
-
-            frame.id     = FLEXCAN_ID_STD(txIdentifier);
-            txXfer.mbIdx = (uint8_t)TX_MESSAGE_BUFFER_NUM;
-            txXfer.frame = &frame;
-            (void)FLEXCAN_TransferSendNonBlocking(EXAMPLE_CAN, &flexcanHandle, &txXfer);
-
-            while (!txComplete)
-            {
-            };
-            txComplete = false;
-            LOG_INFO("Wait Node A to trigger the next transmission!\r\n\r\n");
+            PRINTF("node_type ERROR: \r\n");
         }
     }
 }
